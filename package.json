@@ -1,0 +1,24 @@
+{
+    "name": "app-data-processing-server",
+    "version": "1.0.0",
+    "description": "",
+    "main": "server.js",
+    "scripts": {
+        "test": "nodemon server.js",
+        "start": "node server.js"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/Yoga-Masters/App-Data-Processing-Server.git"
+    },
+    "author": "",
+    "license": "ISC",
+    "bugs": {
+        "url": "https://github.com/Yoga-Masters/App-Data-Processing-Server/issues"
+    },
+    "homepage": "https://github.com/Yoga-Masters/App-Data-Processing-Server#readme",
+    "dependencies": {
+        "firebase-admin": "^5.12.0",
+        "jimp": "^0.2.28"
+    }
+}
