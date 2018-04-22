@@ -61,3 +61,5 @@ package-lock.json
 models/
 processing/
 json/
+.dll
+.exe
