@@ -60,3 +60,4 @@ typings/
 package-lock.json
 models/
 processing/
+json/
