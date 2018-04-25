@@ -40,6 +40,15 @@ adb.ref("size").on("value", snap => {
 });
 // FIX PROCESSING SERVER
 // adb.ref("users").on("child_added", (snap, prevChildKey) => {
+//     users[snap.val().key] = {"updating": snap.val().updating, "dimensions": snap.val().dimensions};
+//     adb.ref("users/" + snap.val().key + "/updating").on("value", snap => {
+//         users[snap.ref.parent.key].updating = snap.val();
+//     });
+//     adb.ref("users/" + snap.val().key + "/dimensions").on("value", snap => {
+//         users[snap.ref.parent.key].dimensions = snap.val();
+//     });
+// });
+// adb.ref("users").on("child_added", (snap, prevChildKey) => {
 //     users[snap.val().key] = snap.val().updating;
 //     adb.ref("users/" + snap.val().key + "/updating").on("value", snap => {
 //         users[snap.ref.parent.key] = snap.val();
@@ -57,34 +66,47 @@ adb.ref("size").on("value", snap => {
 //             });
 //         });
 //     });
-// });
-// // ==================== APP HANDLING PROCESSING FUNCTIONS ====================
-// function handleAppDataUpdating(user, ext, time) {
-//     fs.readFile("./processing/processed/" + user + "_keypoints.json", 'utf8', (err, data) => {
-//         console.log("Finished reading file " + user + " json after " + (Date.now() - time) + "ms. Processing image...");
-//         if (!data) return;
-//         var openPoseData = extractData(JSON.parse(data));
-//         if (openPoseData[1] == 0 || openPoseData[1] == 1)
-//             updateAppData(user, openPoseData, {}, time);
-//         else imageProcessing("./processing/latest/" + user + "." + ext, openPoseData[0][0], openPoseData[0][1], openPoseData[0][2], openPoseData[0][3], (err, trainingImage) => {
-//             console.log("Openpose successfully found a whole person!");
-//             updateAppData(user, openPoseData, {
-//                 "latestTensorData/latestProcessedFrame": trainingImage
-//             }, time);
+// adb.ref("users/" + snap.val().key + "/latestFrame").on("value", snap => {
+//     var time = Date.now();
+//     var data = snap.val();
+//     if (!data || data == "") return;
+//     var key = snap.ref.parent.key;
+//     var ext = snap.val().split(';')[0].match(/jpeg|png|gif|jpg|webp/)[0];
+//     fs.writeFile("./processing/pictures/" + key + "." + ext, data.replace(/^data:image\/\w+;base64,/, ""), 'base64', err => {
+//         console.log("Saved new latestFrame from user " + key + " frame in " + (Date.now() - time) + "ms to ./processing/pictures/" + key + "." + ext + "...");
+//         runOpenPose("./processing/pictures", "./processing/pictures/processed", () => { //TODO: ALEX, CAN U REPLACE WITH 1 IMAGE ONLY OR FASTER OPENPOSE???
+//             handleAppDataUpdating(key, ext, time);
 //         });
 //     });
-// }
+// });
+// });
+// ==================== APP HANDLING PROCESSING FUNCTIONS ====================
+function handleAppDataUpdating(user, ext, time) {
+    fs.readFile("./processing/pictures/processed/" + user + "_keypoints.json", 'utf8', (err, data) => {
+        console.log("Finished reading file " + user + " json after " + (Date.now() - time) + "ms. Processing image...");
+        if (!data) return;
+        var openPoseData = extractData(JSON.parse(data));
+        if (openPoseData[1] == 0 || openPoseData[1] == 1)
+            updateAppData(user, openPoseData, {}, time);
+        else imageProcessing("./processing/pictures/" + user + "." + ext, openPoseData[0][0], openPoseData[0][1], openPoseData[0][2], openPoseData[0][3], (err, trainingImage) => {
+            console.log("Openpose successfully found a whole person!");
+            updateAppData(user, openPoseData, {
+                "latestTensorData/latestProcessedFrame": trainingImage
+            }, time);
+        });
+    });
+}
 
-// function updateAppData(user, openPoseData, newData, time) {
-//     openPoseFrameProcessing(("./processing/processed/" + user + "_rendered.png"), (err, openposeImage) => {
-//         console.log("Finished processing file " + user + " images after " + (Date.now() - time) + "ms. Uploading data...");
-//         newData["lastUpdated"] = Date.now();
-//         newData["latestOpenPoseFrame"] = openposeImage;
-//         for (var type in openPoseData)
-//             if (type > 0) newData["latestTensorData/datatype" + type] = openPoseData[type];
-//         adb.ref("users/" + user).update(newData);
-//     });
-// }
+function updateAppData(user, openPoseData, newData, time) {
+    openPoseFrameProcessing(("./processing/pictures/processed/" + user + "_rendered.png"), (err, openposeImage) => {
+        console.log("Finished processing file " + user + " images after " + (Date.now() - time) + "ms. Uploading data...");
+        newData["lastUpdated"] = Date.now();
+        newData["latestOpenPoseFrame"] = openposeImage;
+        for (var type in openPoseData)
+            if (type > 0) newData["latestTensorData/datatype" + type] = openPoseData[type];
+        adb.ref("users/" + user).update(newData);
+    });
+}
 // ==================== OPENPOSE + IMG PROCESSING FUNCTIONS ====================
 function runOpenPose(dir, outDir, callback) { // OpenPoseDemo.exe --image_dir [DIRECTORY] --write_images [DIRECTORY] --write_keypoint_json [DIRECTORY] --no_display
     var time = Date.now();
