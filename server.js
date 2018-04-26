@@ -10,6 +10,7 @@ var size = 100;
 var users = {};
 var types = {};
 var background;
+var running = false;
 var oprunning = false;
 jimp.read("background.jpg", (err, image) => {
     background = image;
@@ -38,7 +39,7 @@ adb.ref("size").on("value", snap => {
 adb.ref("types").on("value", snap => {
     types = snap.val();
     console.log("types got updated to: " + JSON.stringify(types));
-});
+});                                                                                                                                                                                         
 adb.ref("users").on("child_added", (snap) => {
     users[snap.val().key] = {
         "updating": snap.val().updating,
@@ -51,26 +52,35 @@ adb.ref("users").on("child_added", (snap) => {
         users[snap.ref.parent.key].dimensions = snap.val();
     });
     adb.ref("users/" + snap.val().key + "/latestFrame").on("value", snap => {
-        delete users[snap.ref.parent.key].file;
-        var data = snap.val();
-        if (!data || data == "") return;
-        var time = Date.now();
-        var key = snap.ref.parent.key;
-        var ext = snap.val().split(';')[0].match(/jpeg|png|gif|jpg|webp/)[0];
-        fs.writeFile("./processing/" + key + "." + ext, data.replace(/^data:image\/\w+;base64,/, ""), 'base64', err => {
-            console.log("Saved new latestFrame from user " + key + " frame in " + (Date.now() - time) + "ms to ./processing/" + key + "." + ext + "...");
-            users[snap.ref.parent.key].file = key + "." + ext;
-            if (!oprunning) {
-                runOpenPose("./processing", "./processing/processed", loopRunOpenPoseUpload);
-                oprunning = true;
-            }
-        });
+        handleLatestFrame(snap);
     });
 });
 // ==================== APP HANDLING PROCESSING FUNCTIONS ====================
-function loopRunOpenPoseUpload(time) {
-    handleAppDataUpdating(time, () => {
-        runOpenPose("./processing", "./processing/processed", loopRunOpenPoseUpload);
+// function loopRunOpenPoseUpload(time) {
+//     handleAppDataUpdating(time, () => {
+//         runOpenPose("./processing", "./processing/processed", loopRunOpenPoseUpload);
+//     });
+// }
+function handleLatestFrame(snap) {
+    if (running) return;
+    running = true;
+    delete users[snap.ref.parent.key].file;
+    var data = snap.val();
+    if (!data || data == "") {
+        running = false;
+        return;
+    }
+    var time = Date.now();
+    var key = snap.ref.parent.key;
+    var ext = data.split(';')[0].match(/jpeg|png|gif|jpg|webp/)[0];
+    fs.writeFile("./processing/" + key + "." + ext, data.replace(/^data:image\/\w+;base64,/, ""), 'base64', err => {
+        console.log("Saved new latestFrame from user " + key + " frame in " + (Date.now() - time) + "ms to ./processing/" + key + "." + ext + "...");
+        users[snap.ref.parent.key].file = key + "." + ext;
+        runOpenPose("./processing", "./processing/processed", () => {
+            handleAppDataUpdating(time, () => {
+                running = false;
+            })
+        });
     });
 }
 
@@ -88,7 +98,13 @@ function handleAppDataUpdating(time, cb) {
         var ext = path.extname(file);
         var key = file.slice(0, -(ext.length));
         console.log("Starting file read for user " + key + " after " + (Date.now() - time) + "ms...");
-        if (!users[key].updating) completion[key] = true;
+        if (!users[key].updating) {
+            completion[key] = true;
+            checkReqComplete(completion, () => {
+                console.log("Finished updating all files in " + (Date.now() - time) + "ms");
+                cb();
+            });
+        }
         else fs.readFile("./processing/processed/" + key + "_keypoints.json", 'utf8', (err, data) => {
             console.log("Read file for user " + key + " finished in " + (Date.now() - time) + "ms. Processing images...");
             if (!data) {
@@ -96,10 +112,8 @@ function handleAppDataUpdating(time, cb) {
                 return;
             }
             var openPoseData = extractData(JSON.parse(data));
-            console.log(openPoseData[0]);
             if (openPoseData[0].every(x => x === -1)) openPoseData[0] = getCenter(users[key].dimensions);
             else console.log("Openpose successfully found a whole person for user " + key + "!");
-            console.log(openPoseData);
             processUploadAppData(key, ext, openPoseData, {}, time, () => {
                 completion[key] = true;
                 checkReqComplete(completion, () => {
@@ -144,7 +158,7 @@ function runOpenPose(dir, outDir, callback) { // OpenPoseDemo.exe --image_dir [D
         "--no_display"
     ], (error, stdout, stderr) => {
         console.log("Finished running openPoseDemo in " + (Date.now() - time) + "ms @ " + dir + " to " + outDir + "; processing files now...");
-        callback(time);
+        callback();
     });
 }
 // Main extract data method that takes in poseData and returns array of data
