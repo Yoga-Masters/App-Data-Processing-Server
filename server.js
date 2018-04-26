@@ -69,48 +69,49 @@ adb.ref("users").on("child_added", (snap) => {
 });
 // ==================== APP HANDLING PROCESSING FUNCTIONS ====================
 function loopRunOpenPoseUpload(time) {
-    handleAppDataUpdating(time);
-    runOpenPose("./processing", "./processing/processed", loopRunOpenPoseUpload);
+    handleAppDataUpdating(time, () => {
+        runOpenPose("./processing", "./processing/processed", loopRunOpenPoseUpload);
+    });
 }
 
-function handleAppDataUpdating(time) {
+function handleAppDataUpdating(time, cb) {
     var completion = {};
-    console.log(users);
-    console.log(Object.values(users));
-    console.log(Object.values(users).map(x => x.file));
-    var files = Object.values(users).map(x => x.file).filter(x => !x);
-    console.log(files);
-    if (!files) return;
-    // fs.readdir("./processing", (err, files) => {
+    var files = Object.values(users).map(x => x.file).filter(x => !!x);
+    if (!files) {
+        cb();
+        return;
+    }
     files.forEach(file => {
         completion[file.slice(0, -(path.extname(file).length))] = false;
     });
-    // });
-    // fs.readdir("./processing", (err, files) => {
     files.forEach(file => {
         var ext = path.extname(file);
         var key = file.slice(0, -(ext.length));
         console.log("Starting file read for user " + key + " after " + (Date.now() - time) + "ms...");
-        if (!users[key].updating) return;
+        if (!users[key].updating) completion[key] = true;
         else fs.readFile("./processing/processed/" + key + "_keypoints.json", 'utf8', (err, data) => {
             console.log("Read file for user " + key + " finished in " + (Date.now() - time) + "ms. Processing images...");
-            if (!data) return;
+            if (!data) {
+                completion[key] = true;
+                return;
+            }
             var openPoseData = extractData(JSON.parse(data));
             console.log(openPoseData[0]);
             if (openPoseData[0].every(x => x === -1)) openPoseData[0] = getCenter(users[key].dimensions);
             else console.log("Openpose successfully found a whole person for user " + key + "!");
-            imageProcessingAndUploadingAppData(key, ext, openPoseData, {}, time, () => {
+            console.log(openPoseData);
+            processUploadAppData(key, ext, openPoseData, {}, time, () => {
                 completion[key] = true;
                 checkReqComplete(completion, () => {
                     console.log("Finished updating all files in " + (Date.now() - time) + "ms");
+                    cb();
                 });
             });
         });
     });
-    // });
 }
 
-function imageProcessingAndUploadingAppData(key, ext, openPoseData, newData, time, cb) {
+function processUploadAppData(key, ext, openPoseData, newData, time, cb) {
     imageProcessing("./processing/" + key + ext, openPoseData[0][0], openPoseData[0][1], openPoseData[0][2], openPoseData[0][3], (err, trainingImage) => {
         openPoseFrameProcessing("./processing/processed/" + key + "_rendered.png", users[key].dimensions, (err, openposeImage) => {
             console.log("Finished processing user " + key + " images in " + (Date.now() - time) + "ms. Uploading data...");
@@ -133,8 +134,7 @@ function checkReqComplete(check, cb) {
     cb();
 }
 // ==================== OPENPOSE + DATA PROCESSING FUNCTIONS ===================
-// OpenPoseDemo.exe --image_dir [DIRECTORY] --write_images [DIRECTORY] --write_keypoint_json [DIRECTORY] --no_display
-function runOpenPose(dir, outDir, callback) {
+function runOpenPose(dir, outDir, callback) { // OpenPoseDemo.exe --image_dir [DIRECTORY] --write_images [DIRECTORY] --write_keypoint_json [DIRECTORY] --no_display
     var time = Date.now();
     if (outDir == "") outDir = dir;
     console.log("Running openPoseDemo on \"" + dir + "\" outputting to \"" + outDir + "\"...");
@@ -267,18 +267,18 @@ function imageProcessing(path, x1, y1, x2, y2, cb) {
     var bg = background.clone();
     jimp.read(path, (err, image) => {
         if (err) {
-            cb(false)
+            cb(false);
             console.log(err);
         } else bg.resize((x2 - x1), (y2 - y1)) // Resizes the 1x1 Gray to the size we need it
             .composite(image, -x1, -y1) //Composite the image to have no Grey
             .resize(size, size) //resize to 100 x 100
-            .quality(100) // set JPEG quality
             .greyscale() // greyscale
-            .getBase64(jimp.MIME_JPEG, cb); // return image as base64 in passed in callback
+            .quality(100) // set JPEG quality
+            .getBase64(bg.getMIME(), cb); // return image as base64 in passed in callback
     });
 }
 
-function openPoseFrameProcessing(path, dims, cb) { // ADD POSSIBLE DIMENSION CROPPING BASED ON USERS?
+function openPoseFrameProcessing(path, dims, cb) {
     jimp.read(path, (err, image) => {
         var imgasprtio = image.bitmap.width / image.bitmap.height;
         var dimasprtio = dims[0] / dims[1];
@@ -287,7 +287,7 @@ function openPoseFrameProcessing(path, dims, cb) { // ADD POSSIBLE DIMENSION CRO
             .crop(0, 0, (((dimasprtio <= imgasprtio) ? (dimasprtio / imgasprtio) : 1) * image.bitmap.width), (((imgasprtio <= dimasprtio) ? (imgasprtio / dimasprtio) : 1) * image.bitmap.height))
             .resize(jimp.AUTO, size)
             .quality(100)
-            .getBase64(jimp.MIME_JPEG, cb);
+            .getBase64(image.getMIME(), cb);
     });
 }
 // ============================= HELPER FUNCTIONS ==============================
@@ -307,13 +307,13 @@ function getRandomKey(len) {
 }
 
 function getCenter(dims) {
-    var x = dims[0];
-    var y = dims[1];
+    var x = parseInt(dims[0]);
+    var y = parseInt(dims[1]);
     if (x / y < 1) {
         return [0, (y - x) / 2, x, ((y - x) / 2) + x];
     } else if (x / y >= 1) {
-        return [(x - y) / 2, 0, (x - y) / 2 + y]
-    }
+        return [(x - y) / 2, 0, (x - y) / 2 + y, y];
+    } else return [0, 0, 100, 100];
 }
 
 function readPose(name) {
