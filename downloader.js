@@ -19,18 +19,6 @@ var tdb = appAdmin.database();
 ensureDirectoryExistence("./processing/file.png");
 ensureDirectoryExistence("./processing/processed/file.png");
 // ========================= PASSIVE FIREBASE FUNCTIONS ========================
-// adb.ref("users").on("value", (snap) => {
-//     for (var key of Object.keys(snap.val())) {
-//         var frame = snap.val()[key].latestFrame;
-//         if (!frame || frame == "") console.log("No data...");
-//         else {
-//             var ext = frame.split(';')[0].match(/jpeg|png|gif|jpg|webp/)[0];
-//             fs.writeFile("./processing/" + key + "." + ext, frame.replace(/^data:image\/\w+;base64,/, ""), 'base64', () => {
-//                 console.log("Saved new frame!");
-//             });
-//         }
-//     }
-// });
 adb.ref("users").on("child_added", (snap) => {
     console.log("Starting download for " + snap.val().key + "...");
     adb.ref("users/" + snap.val().key + "/latestFrame").on("value", snap => {

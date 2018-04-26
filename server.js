@@ -10,7 +10,7 @@ var size = 100;
 var users = {};
 var types = {};
 var background;
-var oprunning = false;
+var running = false;
 jimp.read("background.jpg", (err, image) => {
     background = image;
     console.log("Background ready!");
@@ -44,23 +44,21 @@ adb.ref("users").on("child_added", (snap) => {
         "updating": snap.val().updating,
         "dimensions": snap.val().dimensions
     };
-    adb.ref("users/" + snap.val().key + "/updating").on("value", snap => {
-        users[snap.ref.parent.key].updating = snap.val();
-    });
     adb.ref("users/" + snap.val().key + "/dimensions").on("value", snap => {
         users[snap.ref.parent.key].dimensions = snap.val();
     });
-    if (!oprunning) {
-        oprunning = true;
-        runOpenPose("./processing", "./processing/processed", loopRunOpenPoseUpload);
-    }
+    adb.ref("users/" + snap.val().key + "/updating").on("value", snap => {
+        users[snap.ref.parent.key].updating = snap.val();
+        if (!running) loopRunUpload();
+    });
 });
 // ==================== APP HANDLING PROCESSING FUNCTIONS ====================
-function loopRunOpenPoseUpload(time) {
-    handleAppDataUpdating(time, () => {
-        if (Object.values(users).every(x => x.updating == false)) loopRunOpenPoseUpload(time);
-        else runOpenPose("./processing", "./processing/processed", loopRunOpenPoseUpload);
-    });
+function loopRunUpload() {
+    if (Object.values(users).every(x => x.updating == false)) running = false;
+    else {
+        running = true;
+        handleAppDataUpdating(Date.now(), loopRunUpload);
+    }
 }
 
 function handleAppDataUpdating(time, cb) {
@@ -74,7 +72,13 @@ function handleAppDataUpdating(time, cb) {
             var ext = path.extname(file);
             var key = file.slice(0, -(ext.length));
             console.log("Starting file read for user " + key + " after " + (Date.now() - time) + "ms...");
-            if (!users[key].updating) {
+            if (!users[key]) {
+                completion[key] = true;
+                checkReqComplete(completion, () => {
+                    console.log("No users...");
+                    cb();
+                });
+            } else if (!users[key].updating) {
                 completion[key] = true;
                 checkReqComplete(completion, () => {
                     console.log("No users are updating...");
@@ -82,19 +86,24 @@ function handleAppDataUpdating(time, cb) {
                 });
             } else fs.readFile("./processing/processed/" + key + "_keypoints.json", 'utf8', (err, data) => {
                 console.log("JSON file read for user " + key + " finished in " + (Date.now() - time) + "ms. Processing images...");
+                console.log("1");
                 if (!data) {
+                    console.log("2");
                     completion[key] = true;
                     checkReqComplete(completion, () => {
                         console.log("No data in json...");
                         cb();
                     });
                 } else {
+                    console.log("3");
                     var openPoseData = extractData(JSON.parse(data));
                     if (openPoseData[0].every(x => x === -1)) openPoseData[0] = getCenter(users[key].dimensions);
                     else console.log("Openpose successfully found a whole person for user " + key + "!");
                     processUploadAppData(key, ext, openPoseData, {}, time, () => {
+                        console.log("4");
                         completion[key] = true;
                         checkReqComplete(completion, () => {
+                            console.log("5");
                             console.log("Finished updating all files in " + (Date.now() - time) + "ms");
                             cb();
                         });
@@ -106,8 +115,9 @@ function handleAppDataUpdating(time, cb) {
 }
 
 function processUploadAppData(key, ext, openPoseData, newData, time, cb) {
-    imageProcessing("./processing/" + key + ext, openPoseData[0][0], openPoseData[0][1], openPoseData[0][2], openPoseData[0][3], (err, trainingImage) => {
-        openPoseFrameProcessing("./processing/processed/" + key + "_rendered.png", users[key].dimensions, (err, openposeImage) => {
+    imageProcessing("./processing/" + key + ext, openPoseData[0][0], openPoseData[0][1], openPoseData[0][2], openPoseData[0][3], (errA, trainingImage) => {
+        openPoseFrameProcessing("./processing/processed/" + key + "_rendered.png", users[key].dimensions, (errB, openposeImage) => {
+            console.log(errA, errB);
             console.log("Finished processing user " + key + " images in " + (Date.now() - time) + "ms. Uploading data...");
             newData["lastUpdated"] = Date.now();
             newData["latestOpenPoseFrame"] = openposeImage;
@@ -274,14 +284,17 @@ function imageProcessing(path, x1, y1, x2, y2, cb) {
 
 function openPoseFrameProcessing(path, dims, cb) {
     jimp.read(path, (err, image) => {
-        var imgasprtio = image.bitmap.width / image.bitmap.height;
-        var dimasprtio = dims[0] / dims[1];
-        if (err) cb(false);
-        else image
-            .crop(0, 0, (((dimasprtio <= imgasprtio) ? (dimasprtio / imgasprtio) : 1) * image.bitmap.width), (((imgasprtio <= dimasprtio) ? (imgasprtio / dimasprtio) : 1) * image.bitmap.height))
-            .resize(jimp.AUTO, size)
-            .quality(100)
-            .getBase64(image.getMIME(), cb);
+        if (err) {
+            cb(false);
+            console.log(err);
+        } else {
+            var imgasprtio = image.bitmap.width / image.bitmap.height;
+            var dimasprtio = dims[0] / dims[1];
+            image.crop(0, 0, (((dimasprtio <= imgasprtio) ? (dimasprtio / imgasprtio) : 1) * image.bitmap.width), (((imgasprtio <= dimasprtio) ? (imgasprtio / dimasprtio) : 1) * image.bitmap.height))
+                .resize(jimp.AUTO, size)
+                .quality(100)
+                .getBase64(image.getMIME(), cb);
+        }
     });
 }
 // ============================= HELPER FUNCTIONS ==============================
