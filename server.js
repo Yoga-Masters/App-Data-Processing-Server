@@ -10,7 +10,7 @@ var size = 100;
 var users = {};
 var types = {};
 var background;
-var running = false;
+var oprunning = false;
 jimp.read("background.jpg", (err, image) => {
     background = image;
     console.log("Background ready!");
@@ -44,21 +44,28 @@ adb.ref("users").on("child_added", (snap) => {
         "updating": snap.val().updating,
         "dimensions": snap.val().dimensions
     };
+    adb.ref("users/" + snap.val().key + "/updating").on("value", snap => {
+        users[snap.ref.parent.key].updating = snap.val();
+    });
     adb.ref("users/" + snap.val().key + "/dimensions").on("value", snap => {
         users[snap.ref.parent.key].dimensions = snap.val();
     });
-    adb.ref("users/" + snap.val().key + "/updating").on("value", snap => {
-        users[snap.ref.parent.key].updating = snap.val();
-        if (!running) loopRunUpload();
-    });
+    if (!oprunning) {
+        oprunning = true;
+        runOpenPose("./processing", "./processing/processed", loopRunOpenPoseUpload);
+    }
 });
 // ==================== APP HANDLING PROCESSING FUNCTIONS ====================
-function loopRunUpload() {
-    if (Object.values(users).every(x => x.updating == false)) running = false;
-    else {
-        running = true;
-        handleAppDataUpdating(Date.now(), loopRunUpload);
-    }
+// function loopRunUpload() {
+//     if (Object.values(users).every(x => x.updating == false)) loopRunUpload();
+//     else handleAppDataUpdating(Date.now(), loopRunUpload);
+// }
+
+function loopRunOpenPoseUpload(time) {
+    handleAppDataUpdating(time, () => {
+        if (Object.values(users).every(x => x.updating == false)) loopRunOpenPoseUpload(time);
+        else runOpenPose("./processing", "./processing/processed", loopRunOpenPoseUpload);
+    });
 }
 
 function handleAppDataUpdating(time, cb) {
@@ -271,7 +278,7 @@ function imageProcessing(path, x1, y1, x2, y2, cb) {
     var bg = background.clone();
     jimp.read(path, (err, image) => {
         if (err) {
-            cb(false);
+            cb(err);
             console.log(err);
         } else bg.resize((x2 - x1), (y2 - y1)) // Resizes the 1x1 Gray to the size we need it
             .composite(image, -x1, -y1) //Composite the image to have no Grey
@@ -285,7 +292,7 @@ function imageProcessing(path, x1, y1, x2, y2, cb) {
 function openPoseFrameProcessing(path, dims, cb) {
     jimp.read(path, (err, image) => {
         if (err) {
-            cb(false);
+            cb(err);
             console.log(err);
         } else {
             var imgasprtio = image.bitmap.width / image.bitmap.height;
