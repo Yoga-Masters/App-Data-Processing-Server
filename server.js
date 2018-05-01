@@ -55,6 +55,69 @@ adb.ref("users").on("child_added", (snap) => {
         runOpenPose("./processing", "./processing/processed", loopRunOpenPoseUpload);
     }
 });
+
+// function getTrainingData(cb) {
+//     tdb.ref("config").once("value", config => {
+//         cb([SELECTED_CLASSES, SELECTED_DATA], [tcnfg.testSplit, tcnfg.learningRate, tcnfg.epochs, tcnfg.minAccuracy, tcnfg.maxLoss]);
+//     });
+// }
+// function updateConfidences(confs, cb) { // TODO: UPDATE TO HAVE ANY # OF CONFIDENCES
+//     console.log("Updating confidences; warriorii to " + warriorii + ", tree to " + tree + ", & triangle to " + triangle + ".");
+//     db.ref("users/" + user + "/latestConfidences").set({
+//         "warriorii": warriorii,
+//         "tree": tree,
+//         "triangle": triangle
+//     }, () => {
+//         if (cb) cb();
+//     });
+// }
+// ========================== TENSORFLOW.JS FUNCTIONS ==========================
+// async function iris() { // The main function of the Iris demo.
+//     const [xTrain, yTrain, xTest, yTest] = getIrisData(0.15);
+//     document.getElementById('train-from-scratch').addEventListener('click', async () => {
+//         model = await trainModel(xTrain, yTrain, xTest, yTest);
+//         evaluateModelOnTestData(model, xTest, yTest);
+//     });
+//     status('Standing by.');
+//     wireUpEvaluateTableCallbacks(() => predictOnManualInput(model));
+// }
+
+// function trainModel(cb) {
+//     var time = Date.now();
+//     canPredict = false;
+//     console.log("Training model with training data...");
+//     var trainData = getTrainingData();
+//     console.log(trainData);
+//     // TODO: PUT IN CODE FOR TRAINING MODEL
+//     // iris();
+//     console.log("Finished training model in " + (Date.now() - time) + "ms!");
+//     canPredict = true;
+//     if (cb) cb();
+// }
+
+// function runTensorflow(data, image, cb) {
+//     if (!canPredict) console.log("Model training is not complete; trying later...");
+//     else {
+//         var time = Date.now();
+//         console.log("Running Tensorflow @ " + (new Date(time)).toLocaleTimeString() + " with data:", data);
+//         getConfidences(model, data).then(confs => {
+//             console.log("Finished Running Tensorflow with: ");
+//             updateConfidences(confs, cb);
+//         });
+//     }
+// }
+
+// tdb.ref("config").once("value", cnfg => {
+//     config = cnfg.val();
+//     types = config.types;
+//     sType = config.training.data;
+//     tcnfg = config.training[config.training.config + "Training"];
+//     poseIndex = (Object.values(config.poseIndex)).sort().reduce((accumulator, currentValue, currentIndex, array) => {
+//         accumulator[Object.keys(config.poseIndex)[Object.values(config.poseIndex).indexOf(array[currentIndex])]] = array[currentIndex];
+//         return accumulator;
+//     }, {});
+// });
+
 // ==================== APP HANDLING PROCESSING FUNCTIONS ====================
 // function loopRunUpload() {
 //     if (Object.values(users).every(x => x.updating == false)) loopRunUpload();
