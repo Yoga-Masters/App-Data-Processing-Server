@@ -37,10 +37,11 @@ var adb = admin.database();
 var tdb = appAdmin.database();
 // ========================= PASSIVE FIREBASE FUNCTIONS ========================
 tdb.ref("config").once("value", config => {
+    adb.ref("training").set(true);
     config = config.val();
     size = config.size;
     console.log("Size got updated after " + (Date.now() - time) + "ms to: " + size + "px!");
-    stype = config.data;
+    stype = config.training.data;
     console.log("Selected Data Type got updated after " + (Date.now() - time) + "ms to: " + stype + "!");
     types = config.types;
     console.log("Types got updated after " + (Date.now() - time) + "ms to: " + JSON.stringify(types));
@@ -49,9 +50,9 @@ tdb.ref("config").once("value", config => {
         return accumulator;
     }, {});
     console.log("PoseIndex got updated after " + (Date.now() - time) + "ms to: " + JSON.stringify(poseIndex));
-    tcnfg = config.training[config.training.config + "Training"];
+    tcnfg = config.training["serverTraining"];
     console.log("Training Config got updated after " + (Date.now() - time) + "ms to: " + JSON.stringify(tcnfg));
-    console.log("Got " + tfdta.getSelectedNumClasses() + " classes: " + tfdta.getSelectedClasses() + " to train for, along with " + getSelectedDataColNum() + " rows X " + tfdta.getSelectedNumData() - 1 + " columns of data to train with...");
+    console.log("Got " + tfdta.getSelectedNumClasses() + " classes: " + tfdta.getSelectedClasses() + " to train for, along with " + getSelectedDataColNum() + " rows X " + (tfdta.getSelectedNumData() - 1) + " columns of data to train with...");
     console.log("\nTraining with the " + tcnfg.speed + " config...");
     tftls.getTrainedModel([tfdta.getSelectedClasses(), tfdta.getSelectedData()], [tcnfg.testSplit, tcnfg.learningRate, tcnfg.epochs, tcnfg.minAccuracy, tcnfg.maxLoss]).then(mdl => { // Calling the train model function and logging the results
         model = mdl.model;
@@ -69,6 +70,7 @@ tdb.ref("config").once("value", config => {
             console.log("AFTER " + (Date.now() - time) + "MS, MAIN RUNNER NONE:", confs, tfdta.getSelectedClasses()[confs.indexOf(Math.max.apply({}, confs))]);
         });
         console.log("App Server setup in " + (Date.now() - time) + "ms.");
+        adb.ref("training").set(false);
         startAppServer();
     });
 });
@@ -79,7 +81,8 @@ function startAppServer() {
         users[snap.val().key] = {
             "updating": snap.val().updating,
             "dimensions": snap.val().dimensions,
-            "working": false
+            "working": false,
+            "priority": 0
         };
         adb.ref("users/" + snap.val().key + "/updating").on("value", snap => {
             users[snap.ref.parent.key].updating = snap.val();
@@ -89,49 +92,72 @@ function startAppServer() {
         });
         adb.ref("users/" + snap.val().key + "/latestFrame").on("value", snap => {
             var key = snap.ref.parent.key;
-            if (!users[key].working) {
+            var maxPriority = Object.values(users).reduce((accumulator, currentValue) => {
+                if (accumulator < currentValue.priority) accumulator = currentValue.priority;
+                return accumulator;
+            }, 0);
+            if (!users[key].working && users[key].priority >= maxPriority) {
                 users[key].working = true;
                 var data = snap.val();
-                if (!data || data == "") return;
-                var time = Date.now();
-                var ext = data.split(';')[0].match(/jpeg|png|gif|jpg|webp/)[0];
-                ensureDirectoryExistence("./processing/" + key + "/img." + ext);
-                fs.writeFile("./processing/" + key + "/img." + ext, data.replace(/^data:image\/\w+;base64,/, ""), 'base64', err => {
-                    console.log("Saved new " + ext + " frame - latestFame in " + (Date.now() - time) + "ms to ./processing/" + key + "/img." + ext + "...");
+                if (!data || data === null || data == "") {
                     users[key].working = false;
-                    runOpenPose("./processing/" + key, "./processing/" + key + "/processed", time, () => {
-                        console.log("Starting file read for user " + key + " after " + (Date.now() - time) + "ms...");
-                        fs.readFile("./processing/" + key + "/processed/img_keypoints.json", 'utf8', (err, data) => {
-                            console.log("JSON file read for user " + key + " finished in " + (Date.now() - time) + "ms. Running Tensorflow...");
-                            var openPoseData = extractData(JSON.parse(data));
-                            if (openPoseData[0].every(x => x === -1)) openPoseData[0] = getCenter(users[key].dimensions);
-                            else console.log("Openpose successfully found a whole person for user " + key + "!");
-                            var newData = {};
-                            console.log("Running Tensorflow prediction with Openpose Data with selected data " + types[stype] + "...")
-                            tftls.getConfidences(model, openPoseData[stype]).then(confs => {
-                                console.log("After " + (Date.now() - time) + "ms, got confidences:", confs, tfdta.getSelectedClasses()[confs.indexOf(Math.max.apply({}, confs))], ". Processing images...");
+                    users[key].priority = 0;
+                } else {
+                    var time = Date.now();
+                    var ext = data.split(';')[0].match(/jpeg|png|gif|jpg|webp/)[0];
+                    ensureDirectoryExistence("./processing/" + key + "/img." + ext);
+                    fs.writeFile("./processing/" + key + "/img." + ext, data.replace(/^data:image\/\w+;base64,/, ""), 'base64', err => {
+                        console.log("Saved new " + ext + " frame - latestFame in " + (Date.now() - time) + "ms to ./processing/" + key + "/img." + ext + "...");
+                        runOpenPose("./processing/" + key, "./processing/" + key + "/processed", time, () => {
+                            console.log("Starting file read for user " + key + " after " + (Date.now() - time) + "ms...");
+                            fs.readFile("./processing/" + key + "/processed/img_keypoints.json", 'utf8', (err, data) => {
+                                console.log("JSON file read for user " + key + " finished in " + (Date.now() - time) + "ms. Processing Images...");
+                                var dtat;
+                                try {
+                                    dtat = JSON.parse(data);
+                                } catch (e) {
+                                    dtat = {
+                                        "people": []
+                                    };
+                                }
+                                var openPoseData = extractData(dtat);
+                                if (openPoseData[0].every(x => x === -1)) openPoseData[0] = getCenter(users[key].dimensions);
+                                else console.log("Openpose successfully found a whole person for user " + key + "!");
+                                var newData = {};
                                 imageProcessing("./processing/" + key + "/img." + ext, openPoseData[0][0], openPoseData[0][1], openPoseData[0][2], openPoseData[0][3], (errA, trainingImage) => {
                                     openPoseFrameProcessing("./processing/" + key + "/processed/img_rendered.png", users[key].dimensions, (errB, openposeImage) => {
-                                        console.log("Finished processing user " + key + " images in " + (Date.now() - time) + "ms. Uploading data...");
-                                        newData["lastUpdated"] = Date.now();
+                                        console.log("Finished processing user " + key + " images in " + (Date.now() - time) + "ms. Running Tensorflow condintionally & uploading data...");
                                         newData["latestOpenPoseFrame"] = openposeImage;
                                         newData["latestTensorData/latestProcessedFrame"] = trainingImage;
                                         for (var type in openPoseData)
                                             if (type > 0) newData["latestTensorData/datatype" + type] = openPoseData[type];
-                                        for (var i = 0; i < tfdta.getSelectedClasses().length; i++)
-                                            newData["latestConfidences/" + tfdta.getSelectedClasses()[i]] = confs[i];
-                                        adb.ref("users/" + key).update(newData, err => {
-                                            console.log("Finished uploading user " + key + " data after " + (Date.now() - time) + "ms.");
-                                            users[key].working = false;
-                                        });
+                                        var predictData = openPoseData[Object.keys(types).indexOf(stype) + 1];
+                                        newData["lastUpdated"] = Date.now();
+                                        if (predictData && predictData !== 1) {
+                                            console.log("Running Tensorflow prediction with Openpose Data with selected data " + types[stype] + "...");
+                                            tftls.getConfidences(model, openPoseData[Object.keys(types).indexOf(stype) + 1]).then(confs => {
+                                                console.log("After " + (Date.now() - time) + "ms, got confidences:", confs, tfdta.getSelectedClasses()[confs.indexOf(Math.max.apply({}, confs))], ". Uploading data...");
+                                                newData["lastUpdated"] = Date.now();
+                                                for (var i = 0; i < tfdta.getSelectedClasses().length; i++) newData["latestConfidences/" + tfdta.getSelectedClasses()[i]] = confs[i];
+                                                upload(key, newData, time);
+                                            });
+                                        } else upload(key, newData, time);
                                     });
                                 });
                             });
                         });
                     });
-                });
-            }
+                }
+            } else users[key].priority += 1;
         });
+    });
+}
+
+function upload(key, newData, time) {
+    adb.ref("users/" + key).update(newData, err => {
+        console.log("Finished uploading user " + key + " data after " + (Date.now() - time) + "ms.");
+        users[key].working = false;
+        users[key].priority = 0;
     });
 }
 // ==================== OPENPOSE + DATA PROCESSING FUNCTIONS ===================
@@ -154,7 +180,8 @@ function extractData(poseData) {
         0, // 0, 1, OR ARRAY OF RELATIVE MAGNITUDES; MAKE CO-ORDINATES RELATIVE TO 0 -> 1, AND THEN FIND MAGNITUDES OF EACH POINTS FROM A AVERAGE POINT OF ALL POINTS
         0, // 0, 1, OR ARRAY OF RELATIVE CO-ORDINATE POSITIONS [X1, Y1, X2, Y2, ..., XN, YN], XN AND YN ARE BETWEEN 0 - 1
         0, // 0, 1, OR ARRAY OF ANGLES BASED ON YOUR OLD METHOD THAT MIGHT BE DIRECTION AGNOSTIC
-        0 // 0, 1, OR ARRAY OF ANGLES AND MAGNITUDES CONCATENATED
+        0, // 0, 1, OR ARRAY OF ANGLES AND MAGNITUDES CONCATENATED
+        0 // 0, 1, OR ARRAY OF ANGLES AND MAGNITUDES AND POSITIONS CONCATENATED
         //0, // ANY OTHER WAYS WE CAN THINK OF GATHERING MEANING FROM OPEN POSE, MAYBE ANGLES BASED ON THE NEW WEBSITE WE FOUND?
     ];
     if (poseData.people.length == 0) return output; // Return 0s for nobody in frame
@@ -172,6 +199,7 @@ function extractData(poseData) {
     output[2] = extractRelativeCoordinates(keypoints, output[0]); //Relative coordinates
     output[3] = extractAngleRelativeToLine(keypoints); //Angle relative to vertical line
     output[4] = output[3].concat(output[1]); //Concat of relative angles to vertical line and relative magnitudes
+    output[5] = output[3].concat(output[1].concat(output[2])); //Concat of relative angles and relative magnitudes and relative positions
     return output;
 }
 // Finds cropping dimensions for pose image.
@@ -323,13 +351,6 @@ function getCenter(dims) {
     } else return [0, 0, 100, 100];
 }
 
-function readPose(name) {
-    if (name.toLowerCase().includes("warriorii")) return "warriorii";
-    else if (name.toLowerCase().includes("tree")) return "tree";
-    else if (name.toLowerCase().includes("triangle")) return "triangle";
-    else return false;
-}
-
 function magnitude(x1, y1, x2, y2) {
     return Math.abs(Math.pow((Math.pow((x2 - x1), 2) + Math.pow((y2 - y1), 2)), 0.5));
 }
@@ -346,155 +367,3 @@ function radiansToDegrees(radians) {
 function degreesToRadians(degrees) {
     return (degrees * Math.PI / 180);
 }
-// ============================= OLD OLD OLD CODE ==============================
-// function getTrainingData(cb) {
-//     tdb.ref("config").once("value", config => {
-//         cb([SELECTED_CLASSES, SELECTED_DATA], [tcnfg.testSplit, tcnfg.learningRate, tcnfg.epochs, tcnfg.minAccuracy, tcnfg.maxLoss]);
-//     });
-// }
-// function updateConfidences(confs, cb) { // TODO: UPDATE TO HAVE ANY # OF CONFIDENCES
-//     console.log("\n"+"Updating confidences; warriorii to " + warriorii + ", tree to " + tree + ", & triangle to " + triangle + ".");
-//     db.ref("users/" + user + "/latestConfidences").set({
-//         "warriorii": warriorii,
-//         "tree": tree,
-//         "triangle": triangle
-//     }, () => {
-//         if (cb) cb();
-//     });
-// }
-// ========================== TENSORFLOW.JS FUNCTIONS ==========================
-// async function iris() { // The main function of the Iris demo.
-//     const [xTrain, yTrain, xTest, yTest] = getIrisData(0.15);
-//     document.getElementById('train-from-scratch').addEventListener('click', async () => {
-//         model = await trainModel(xTrain, yTrain, xTest, yTest);
-//         evaluateModelOnTestData(model, xTest, yTest);
-//     });
-//     status('Standing by.');
-//     wireUpEvaluateTableCallbacks(() => predictOnManualInput(model));
-// }
-
-// function trainModel(cb) {
-//     var time = Date.now();
-//     canPredict = false;
-//     console.log("\n"+"Training model with training data...");
-//     var trainData = getTrainingData();
-//     console.log("\n"+trainData);
-//     // TODO: PUT IN CODE FOR TRAINING MODEL
-//     // iris();
-//     console.log("\n"+"Finished training model in " + (Date.now() - time) + "ms!");
-//     canPredict = true;
-//     if (cb) cb();
-// }
-
-// function runTensorflow(data, image, cb) {
-//     if (!canPredict) console.log("\n"+"Model training is not complete; trying later...");
-//     else {
-//         var time = Date.now();
-//         console.log("\n"+"Running Tensorflow @ " + (new Date(time)).toLocaleTimeString() + " with data:", data);
-//         getConfidences(model, data).then(confs => {
-//             console.log("\n"+"Finished Running Tensorflow with: ");
-//             updateConfidences(confs, cb);
-//         });
-//     }
-// }
-
-// tdb.ref("config").once("value", cnfg => {
-//     config = cnfg.val();
-//     types = config.types;
-//     stype = config.training.data;
-//     tcnfg = config.training[config.training.config + "Training"];
-//     poseIndex = (Object.values(config.poseIndex)).sort().reduce((accumulator, currentValue, currentIndex, array) => {
-//         accumulator[Object.keys(config.poseIndex)[Object.values(config.poseIndex).indexOf(array[currentIndex])]] = array[currentIndex];
-//         return accumulator;
-//     }, {});
-// });
-
-// ==================== APP HANDLING PROCESSING FUNCTIONS ====================
-// function loopRunUpload() {
-//     if (Object.values(users).every(x => x.updating == false)) loopRunUpload();
-//     else handleAppDataUpdating(Date.now(), loopRunUpload);
-// }
-
-// function loopRunOpenPoseUpload(time) {
-//     handleAppDataUpdating(time, () => {
-//         if (Object.values(users).every(x => x.updating == false)) loopRunOpenPoseUpload(time);
-//         else runOpenPose("./processing", "./processing/processed", loopRunOpenPoseUpload);
-//     });
-// }
-
-// function handleAppDataUpdating(time, cb) {
-//     var completion = {};
-//     fs.readdir("./processing", (err, files) => {
-//         files = files.filter(word => word.includes("."));
-//         files.forEach(file => {
-//             completion[file.slice(0, -(path.extname(file).length))] = false;
-//         });
-//         files.forEach(file => {
-//             var ext = path.extname(file);
-//             var key = file.slice(0, -(ext.length));
-//             console.log("\n"+"Starting file read for user " + key + " after " + (Date.now() - time) + "ms...");
-//             if (!users[key]) {
-//                 completion[key] = true;
-//                 checkReqComplete(completion, () => {
-//                     console.log("\n"+"No users...");
-//                     cb();
-//                 });
-//             } else if (!users[key].updating) {
-//                 completion[key] = true;
-//                 checkReqComplete(completion, () => {
-//                     console.log("\n"+"No users are updating...");
-//                     cb();
-//                 });
-//             } else fs.readFile("./processing/processed/" + key + "_keypoints.json", 'utf8', (err, data) => {
-//                 console.log("\n"+"JSON file read for user " + key + " finished in " + (Date.now() - time) + "ms. Processing images...");
-//                 console.log("\n"+"1");
-//                 if (!data) {
-//                     console.log("\n"+"2");
-//                     completion[key] = true;
-//                     checkReqComplete(completion, () => {
-//                         console.log("\n"+"No data in json...");
-//                         cb();
-//                     });
-//                 } else {
-//                     console.log("\n"+"3");
-//                     var openPoseData = extractData(JSON.parse(data));
-//                     if (openPoseData[0].every(x => x === -1)) openPoseData[0] = getCenter(users[key].dimensions);
-//                     else console.log("\n"+"Openpose successfully found a whole person for user " + key + "!");
-//                     processUploadAppData(key, ext, openPoseData, {}, time, () => {
-//                         console.log("\n"+"4");
-//                         completion[key] = true;
-//                         checkReqComplete(completion, () => {
-//                             console.log("\n"+"5");
-//                             console.log("\n"+"Finished updating all files in " + (Date.now() - time) + "ms");
-//                             cb();
-//                         });
-//                     });
-//                 }
-//             });
-//         });
-//     });
-// }
-
-// function processUploadAppData(key, ext, openPoseData, newData, time, cb) {
-//     imageProcessing("./processing/" + key + ext, openPoseData[0][0], openPoseData[0][1], openPoseData[0][2], openPoseData[0][3], (errA, trainingImage) => {
-//         openPoseFrameProcessing("./processing/processed/" + key + "_rendered.png", users[key].dimensions, (errB, openposeImage) => {
-//             console.log("\n"+errA, errB);
-//             console.log("\n"+"Finished processing user " + key + " images in " + (Date.now() - time) + "ms. Uploading data...");
-//             newData["lastUpdated"] = Date.now();
-//             newData["latestOpenPoseFrame"] = openposeImage;
-//             newData["latestTensorData/latestProcessedFrame"] = trainingImage;
-//             for (var type in openPoseData)
-//                 if (type > 0) newData["latestTensorData/datatype" + type] = openPoseData[type];
-//             adb.ref("users/" + key).update(newData, err => {
-//                 console.log("\n"+"Finished uploading user " + key + " data after " + (Date.now() - time) + "ms.");
-//                 cb();
-//             });
-//         });
-//     });
-// }
-
-// function checkReqComplete(check, cb) {
-//     for (const done of Object.keys(check))
-//         if (!check[done]) return;
-//     cb();
-// }
