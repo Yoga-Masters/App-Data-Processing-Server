@@ -112,7 +112,7 @@ function startAppServer() {
                             console.log("Starting file read for user " + key + " after " + (Date.now() - time) + "ms...");
                             fs.readFile("./processing/" + key + "/processed/img_keypoints.json", 'utf8', (err, data) => {
                                 console.log("JSON file read for user " + key + " finished in " + (Date.now() - time) + "ms. Processing Images...");
-                                var dtat;
+                                var dtat = JSON.parse(data);
                                 try {
                                     dtat = JSON.parse(data);
                                 } catch (e) {
@@ -185,7 +185,7 @@ function extractData(poseData) {
         //0, // ANY OTHER WAYS WE CAN THINK OF GATHERING MEANING FROM OPEN POSE, MAYBE ANGLES BASED ON THE NEW WEBSITE WE FOUND?
     ];
     if (poseData.people.length == 0) return output; // Return 0s for nobody in frame
-    output[1] = output[2] = output[3] = output[4] = 1;
+    output[1] = output[2] = output[3] = output[4] = output[5] = 1;
     var personIndex = -1;
     for (var p = poseData.people.length - 1; p > -1; p--) {
         personIndex = p;
